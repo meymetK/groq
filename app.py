@@ -39,7 +39,7 @@ if not check_password():
 # MODEL (GROQ)
 # =========================================================
 # Groq'un görüntü okuyabilen güçlü Llama modeli
-MODEL_NAME = "qwen/qwen3.6-27b"
+MODEL_NAME = "qwen/qwen3.8-27b"
 # =========================================================
 # HAFIZA (Session State)
 # =========================================================
