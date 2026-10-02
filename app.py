@@ -39,8 +39,7 @@ if not check_password():
 # MODEL (GROQ)
 # =========================================================
 # Groq'un görüntü okuyabilen güçlü Llama modeli
-MODEL_NAME = "llama-3.2-90b-vision-preview" 
-
+MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
 # =========================================================
 # HAFIZA (Session State)
 # =========================================================
