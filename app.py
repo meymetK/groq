@@ -292,8 +292,11 @@ with sag_sutun:
                 # =========================================================
                 if not blocks["BASLIK"] and not blocks["ACIKLAMA"] and not blocks["ETIKETLER"]:
                     st.warning("⚠️ Model içerikleri başarıyla üretti ancak kutulara yerleştirmek için gereken formata uymadı. Üretilen içerikleri aşağıda görebilirsiniz:")
+                    
+                    # Ekstra notu ayrı uyarı olarak vermek yerine metnin sonuna ekliyoruz!
                     if ekstra_not:
-                        st.info(f"Eklenen Ekstra Not: {ekstra_not}")
+                        response_text += f"\n\n• {ekstra_not}"
+                        
                     st.text_area("Yapay Zekanın Ham Çıktısı (Kopyalayabilirsiniz):", response_text, height=500)
                 else:
                     # Formata uyduysa normal kutulara yerleştir
