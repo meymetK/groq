@@ -69,17 +69,66 @@ def sekil_ekle():
     st.session_state.sekil_input = ""
 
 # =========================================================
-# YARDIMCI FONKSİYONLAR
+# YENİ NESİL AKILLI PARÇALAYICI
 # =========================================================
 def parse_blocks(text):
     blocks = {"BASLIK": "", "ACIKLAMA": "", "ETIKETLER": "", "TR_BASLIK": "", "TR_ACIKLAMA": "", "TR_ETIKETLER": ""}
+    
+    # 1. Aşama: En güvenli yöntem olan XML etiketlerini ara
+    xml_patterns = {
+        "BASLIK": r"<BASLIK>(.*?)</BASLIK>",
+        "ACIKLAMA": r"<ACIKLAMA>(.*?)</ACIKLAMA>",
+        "ETIKETLER": r"<ETIKETLER>(.*?)</ETIKETLER>",
+        "TR_BASLIK": r"<TR_BASLIK>(.*?)</TR_BASLIK>",
+        "TR_ACIKLAMA": r"<TR_ACIKLAMA>(.*?)</TR_ACIKLAMA>",
+        "TR_ETIKETLER": r"<TR_ETIKETLER>(.*?)</TR_ETIKETLER>"
+    }
+    
+    found_any = False
+    for key, pattern in xml_patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            blocks[key] = match.group(1).strip()
+            found_any = True
+            
+    if found_any:
+        return blocks
+        
+    # 2. Aşama: Köşeli parantez sistemini dene (eski sistem)
     pattern = r"\[(BASLIK\vert{}ACIKLAMA\vert{}ETIKETLER\vert{}TR_BASLIK\vert{}TR_ACIKLAMA\vert{}TR_ETIKETLER)\]"
-    matches = list(re.finditer(pattern, text))
-    for i, match in enumerate(matches):
-        tag_name = match.group(1)
-        start_pos = match.end()
-        end_pos = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        blocks[tag_name] = text[start_pos:end_pos].strip()
+    matches = list(re.finditer(pattern, text, re.IGNORECASE))
+    if matches:
+        for i, match in enumerate(matches):
+            tag_name = match.group(1).upper()
+            start_pos = match.end()
+            end_pos = matches[i + 1].start() if i + 1 < len(text) else len(text)
+            blocks[tag_name] = text[start_pos:end_pos].strip()
+        return blocks
+        
+    # 3. Aşama: Model hiçbir etikete uymazsa kelimelerden akıllıca böl
+    keyword_map = {
+        "BASLIK": r"(?i)(?:^|\n)(?:\[\vert{}\*\*)?(?:BASLIK\vert{}TITLE)(?:\]|\*\*|:)",
+        "ACIKLAMA": r"(?i)(?:^|\n)(?:\[\vert{}\*\*)?(?:ACIKLAMA\vert{}DESCRIPTION)(?:\]|\*\*|:)",
+        "ETIKETLER": r"(?i)(?:^|\n)(?:\[\vert{}\*\*)?(?:ETIKETLER\vert{}TAGS)(?:\]|\*\*|:)",
+        "TR_BASLIK": r"(?i)(?:^|\n)(?:\[\vert{}\*\*)?(?:TR_BASLIK\vert{}TR_TITLE)(?:\]|\*\*|:)",
+        "TR_ACIKLAMA": r"(?i)(?:^|\n)(?:\[\vert{}\*\*)?(?:TR_ACIKLAMA\vert{}TR_DESCRIPTION)(?:\]|\*\*|:)",
+        "TR_ETIKETLER": r"(?i)(?:^|\n)(?:\[\vert{}\*\*)?(?:TR_ETIKETLER\vert{}TR_TAGS)(?:\]|\*\*|:)"
+    }
+    
+    found_positions = []
+    for key, pat in keyword_map.items():
+        for match in re.finditer(pat, text):
+            found_positions.append((match.start(), match.end(), key))
+            
+    if found_positions:
+        found_positions.sort(key=lambda x: x[0])
+        for i, pos_info in enumerate(found_positions):
+            start_idx = pos_info[1]
+            end_idx = found_positions[i+1][0] if i+1 < len(found_positions) else len(text)
+            val = text[start_idx:end_idx].strip()
+            val = re.sub(r"^[:\-]\s*", "", val)  # Başındaki gereksiz noktalama işaretlerini temizle
+            blocks[pos_info[2]] = val
+            
     return blocks
 
 def clean_tags(tag_str, max_len=20):
@@ -256,7 +305,10 @@ with sag_sutun:
                     translation_instruction = """
                     === TRANSLATION RULES ===
                     Since the target language is ENGLISH, you MUST ALSO provide the exact TURKISH translation. 
-                    Append them at the very end using EXACTLY these tags: [TR_BASLIK], [TR_ACIKLAMA], [TR_ETIKETLER].
+                    Wrap the Turkish translations in exactly these XML tags: 
+                    <TR_BASLIK>...</TR_BASLIK>
+                    <TR_ACIKLAMA>...</TR_ACIKLAMA>
+                    <TR_ETIKETLER>...</TR_ETIKETLER>
                     """
 
                 prompt = f"""
@@ -273,36 +325,37 @@ with sag_sutun:
                 {translation_instruction}
 
                 === CRITICAL FORMATTING RULES ===
-                You MUST wrap your outputs with the exact bracket tags below. Do NOT use markdown bolding (**) for the tags. Do NOT skip the brackets.
+                You MUST wrap your outputs inside the exact XML tags below. Do NOT use markdown formatting or brackets for the tags.
                 
-                [BASLIK]
+                <BASLIK>
                 (Write title here)
-                [ACIKLAMA]
+                </BASLIK>
+                
+                <ACIKLAMA>
                 (Write description here)
-                [ETIKETLER]
+                </ACIKLAMA>
+                
+                <ETIKETLER>
                 (Write tags here)
+                </ETIKETLER>
                 """
 
-                # Groq API'ye resmi ve promptu gönder
                 response_text = generate_once(prompt, uploaded_file)
                 blocks = parse_blocks(response_text)
 
                 # =========================================================
-                # HATA KORUMASI (FALLBACK): Model formata uymazsa ham yazıyı göster
+                # BÖLME KONTROLÜ VE EKRANA YAZDIRMA
                 # =========================================================
                 if not blocks["BASLIK"] and not blocks["ACIKLAMA"] and not blocks["ETIKETLER"]:
-                    st.warning("⚠️ Model içerikleri başarıyla üretti ancak kutulara yerleştirmek için gereken formata uymadı. Üretilen içerikleri aşağıda görebilirsiniz:")
-                    
-                    # Ekstra notu ayrı uyarı olarak vermek yerine metnin sonuna ekliyoruz!
+                    # Hiçbir yöntemle ayrılamayacak kadar bozuk geldiyse (çok çok nadir olur)
+                    st.warning("⚠️ Model üretimi yaptı ancak otomatik bölünemedi. Ham çıktıyı kopyalayabilirsiniz:")
                     if ekstra_not:
                         response_text += f"\n\n• {ekstra_not}"
-                        
-                    st.text_area("Yapay Zekanın Ham Çıktısı (Kopyalayabilirsiniz):", response_text, height=500)
+                    st.text_area("Ham Çıktı:", response_text, height=500)
                 else:
-                    # Formata uyduysa normal kutulara yerleştir
+                    # Başarıyla parçalandı (Normal Akış)
                     if blocks["BASLIK"]:
                         blocks["BASLIK"] = trim_title(blocks["BASLIK"].title())
-
                     if is_english and blocks["TR_BASLIK"]:
                         blocks["TR_BASLIK"] = trim_title(blocks["TR_BASLIK"].title())
 
@@ -311,29 +364,30 @@ with sag_sutun:
                         blocks["TR_ETIKETLER"] = clean_tags(blocks["TR_ETIKETLER"])
 
                     if ekstra_not:
-                        blocks["ACIKLAMA"] += f"\n• {ekstra_not}"
+                        if blocks["ACIKLAMA"]:
+                            blocks["ACIKLAMA"] += f"\n• {ekstra_not}"
                         if is_english and blocks["TR_ACIKLAMA"]:
                             blocks["TR_ACIKLAMA"] += f"\n• {ekstra_not}"
 
                     st.info("💡 Yapay zeka aracılığıyla yüklediğiniz görsel analiz edilerek oluşturulan ürün bilgileri otomasyonudur. Lütfen kullanmadan önce okuyarak gerekli revize işlemlerinden sonra içerikleri uygulayınız.")
                     st.caption(f"🔧 Kullanılan model: `{MODEL_NAME}`  •  Başlık uzunluğu: {len(blocks['BASLIK'])}/140")
 
-                    if is_english and blocks["TR_BASLIK"]:
+                    if is_english and (blocks["TR_BASLIK"] or blocks["TR_ACIKLAMA"]):
                         tab1, tab2 = st.tabs(["🇬🇧 İngilizce (Orijinal)", "🇹🇷 Türkçe Çevirisi (Kontrol İçin)"])
 
                         with tab1:
-                            st.text_area("Başlık", blocks["BASLIK"], label_visibility="collapsed")
+                            st.text_area("Başlık", blocks["BASLIK"], height=68, label_visibility="collapsed")
                             st.text_area("Açıklama", blocks["ACIKLAMA"], height=320, label_visibility="collapsed")
-                            st.text_area("Etiketler", blocks["ETIKETLER"], label_visibility="collapsed")
+                            st.text_area("Etiketler", blocks["ETIKETLER"], height=68, label_visibility="collapsed")
 
                         with tab2:
-                            st.text_area("TR Başlık", blocks["TR_BASLIK"], label_visibility="collapsed")
+                            st.text_area("TR Başlık", blocks["TR_BASLIK"], height=68, label_visibility="collapsed")
                             st.text_area("TR Açıklama", blocks["TR_ACIKLAMA"], height=320, label_visibility="collapsed")
-                            st.text_area("TR Etiketler", blocks["TR_ETIKETLER"], label_visibility="collapsed")
+                            st.text_area("TR Etiketler", blocks["TR_ETIKETLER"], height=68, label_visibility="collapsed")
                     else:
-                        st.text_area("Başlık", blocks["BASLIK"], label_visibility="collapsed")
+                        st.text_area("Başlık", blocks["BASLIK"], height=68, label_visibility="collapsed")
                         st.text_area("Açıklama", blocks["ACIKLAMA"], height=320, label_visibility="collapsed")
-                        st.text_area("Etiketler", blocks["ETIKETLER"], label_visibility="collapsed")
+                        st.text_area("Etiketler", blocks["ETIKETLER"], height=68, label_visibility="collapsed")
 
         except Exception as e:
             st.error(f"Bir hata oluştu. Lütfen birkaç saniye bekleyip tekrar deneyin. Hata detayları: {str(e)}")
