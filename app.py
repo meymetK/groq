@@ -38,8 +38,8 @@ if not check_password():
 # =========================================================
 # MODEL (GROQ)
 # =========================================================
-# Groq'un görüntü okuyabilen güçlü Llama modeli
 MODEL_NAME = "qwen/qwen3.8-27b"
+
 # =========================================================
 # HAFIZA (Session State)
 # =========================================================
@@ -107,18 +107,14 @@ def trim_title(title, max_len=140):
     return cut.strip(" ,.-")
 
 def encode_image(uploaded_file):
-    """Yüklenen resmi Groq API'nin okuyabileceği formata (Base64) çevirir"""
     return base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
 
 def generate_once(prompt_text, uploaded_file):
-    """Groq API'sine görsel ve metin ile istek atar"""
-    # API İstemcisini oluştur
     client = OpenAI(
         base_url="https://api.groq.com/openai/v1",
         api_key=st.secrets.get("GROQ_API_KEY", "")
     )
     
-    # Görseli şifrele
     base64_image = encode_image(uploaded_file)
     
     try:
@@ -242,7 +238,7 @@ with sol_sutun:
 with sag_sutun:
     if uret_btn and uploaded_file is not None:
         try:
-            with st.spinner("Görsel analiz ediliyor, içerikler hazırlanıyor..."):
+            with st.spinner("Görsel analiz ediliyor, içerikler hazırlanıyor (Groq API)..."):
                 target_language = "ENGLISH" if is_english else "TURKISH"
                 product_hint = f"\nThe user describes this product as: '{urun_tanimi}'." if urun_tanimi else ""
 
@@ -258,8 +254,9 @@ with sag_sutun:
                 translation_instruction = ""
                 if is_english:
                     translation_instruction = """
-                    === TRANSLATION RULES (CRITICAL) ===
-                    Since the target language is ENGLISH, you MUST ALSO provide the exact TURKISH translation of your generated Title, Description, and Tags. Append them at the very end using these exact tags: [TR_BASLIK], [TR_ACIKLAMA], [TR_ETIKETLER].
+                    === TRANSLATION RULES ===
+                    Since the target language is ENGLISH, you MUST ALSO provide the exact TURKISH translation. 
+                    Append them at the very end using EXACTLY these tags: [TR_BASLIK], [TR_ACIKLAMA], [TR_ETIKETLER].
                     """
 
                 prompt = f"""
@@ -269,78 +266,71 @@ with sag_sutun:
                 {color_hint}
                 {shape_hint}
 
-                === TITLE RULES ===
-                - Maximum 140 characters, no exceptions.
-                - The FIRST 5 WORDS must be fully, directly related to the actual product (no filler, no generic words before the product is named).
-                - Persuasive and convincing — make the buyer want to click, while staying honest and specific to the image.
-                - Do NOT repeat the same word or use near-synonym phrases of each other back to back (no keyword stuffing, no spammy repetition).
-                - Write it so a human reads it naturally — this is a real title, not a keyword list. Clean, simple, readable.
-
-                === DESCRIPTION RULES ===
-                Write EXACTLY 3 paragraphs. Each paragraph MUST start with a short, warm heading on its own line, prefixed with ONE cute/friendly emoji (vary the emoji per paragraph, e.g. 💛 📦 ✨ 🎀 🤍 — pick what fits, don't overdo it, just one emoji per heading). Structure:
-                - PARAGRAPH 1: Warm, natural, flowing language — as if written by a small, sincere handmade-business owner. Naturally weave in the key words from the Title (don't just repeat the title verbatim). Add a light, genuine emotional touch (e.g. gratitude for the customer's support, the care put into making this) — warm, not cheesy or salesy.
-                - PARAGRAPH 2: Technical specifications AS A BULLET LIST (each line starting with "• "). Naturally include materials, sizes, colors/formats and shapes provided by the user. Keep the tone warm and sincere even while listing specs, not dry/robotic.
-                - PARAGRAPH 3: Who would love this product and why, AS A BULLET LIST (each line starting with "• "), warm and sincere tone — occasions, recipients, use cases. End with one short, warm, sincere closing sentence (not generic marketing language) that makes the buyer feel the product was made with care.
-                - Do NOT use keyword stuffing anywhere. Do NOT repeat the same word unnecessarily across paragraphs.
-
-                === TAG RULES (Long-Tail SEO) ===
-                - Write exactly 13 SEO tags separated by commas.
-                - ABSOLUTE HARD LIMIT: each tag, INCLUDING SPACES, must be 20 characters or fewer. Never exceed this, under any circumstance.
-                - Use multi-word long-tail keyword phrases that best match this specific product.
-                - Do NOT create alternate tags by just swapping/deriving from the same root word (e.g. do not make "dog gift", "dog gifts", "gift for dog" all appear — pick the single best phrasing and use the remaining slots for genuinely different, relevant angles).
-                - Every tag must be genuinely relevant to this specific product — no generic, randomly-generated filler tags.
-
-                === NO HALLUCINATIONS (CRITICAL) ===
-                Do NOT invent, assume, or add ANY file formats (e.g., SVG, PDF, EPS), colors, sizes, or shapes that are not explicitly provided by the user in the lists above. If the user did not specify one, DO NOT mention it.
+                === CONTENT RULES ===
+                TITLE: Maximum 140 characters. First 5 words must be directly related to the product.
+                DESCRIPTION: EXACTLY 3 paragraphs. Start each with an emoji. Paragraph 1: Warm introduction. Paragraph 2: Bullet list of specs. Paragraph 3: Bullet list of uses.
+                TAGS: Exactly 13 SEO tags separated by commas. Maximum 20 characters per tag. Do NOT hallucinate formats not provided.
                 {translation_instruction}
 
-                FORMAT STRICTLY AS FOLLOWS (DO NOT add any conversational text outside these tags):
+                === CRITICAL FORMATTING RULES ===
+                You MUST wrap your outputs with the exact bracket tags below. Do NOT use markdown bolding (**) for the tags. Do NOT skip the brackets.
+                
                 [BASLIK]
-                ...
+                (Write title here)
                 [ACIKLAMA]
-                ...
+                (Write description here)
                 [ETIKETLER]
-                ...
+                (Write tags here)
                 """
 
                 # Groq API'ye resmi ve promptu gönder
                 response_text = generate_once(prompt, uploaded_file)
                 blocks = parse_blocks(response_text)
 
-                if blocks["BASLIK"]:
-                    blocks["BASLIK"] = trim_title(blocks["BASLIK"].title())
+                # =========================================================
+                # HATA KORUMASI (FALLBACK): Model formata uymazsa ham yazıyı göster
+                # =========================================================
+                if not blocks["BASLIK"] and not blocks["ACIKLAMA"] and not blocks["ETIKETLER"]:
+                    st.warning("⚠️ Model içerikleri başarıyla üretti ancak kutulara yerleştirmek için gereken formata uymadı. Üretilen içerikleri aşağıda görebilirsiniz:")
+                    if ekstra_not:
+                        st.info(f"Eklenen Ekstra Not: {ekstra_not}")
+                    st.text_area("Yapay Zekanın Ham Çıktısı (Kopyalayabilirsiniz):", response_text, height=500)
+                else:
+                    # Formata uyduysa normal kutulara yerleştir
+                    if blocks["BASLIK"]:
+                        blocks["BASLIK"] = trim_title(blocks["BASLIK"].title())
 
-                if is_english and blocks["TR_BASLIK"]:
-                    blocks["TR_BASLIK"] = trim_title(blocks["TR_BASLIK"].title())
+                    if is_english and blocks["TR_BASLIK"]:
+                        blocks["TR_BASLIK"] = trim_title(blocks["TR_BASLIK"].title())
 
-                blocks["ETIKETLER"] = clean_tags(blocks["ETIKETLER"])
-                if blocks["TR_ETIKETLER"]:
-                    blocks["TR_ETIKETLER"] = clean_tags(blocks["TR_ETIKETLER"])
+                    blocks["ETIKETLER"] = clean_tags(blocks["ETIKETLER"])
+                    if blocks["TR_ETIKETLER"]:
+                        blocks["TR_ETIKETLER"] = clean_tags(blocks["TR_ETIKETLER"])
 
-                if ekstra_not:
-                    blocks["ACIKLAMA"] += f"\n• {ekstra_not}"
-                    if is_english and blocks["TR_ACIKLAMA"]:
-                        blocks["TR_ACIKLAMA"] += f"\n• {ekstra_not}"
+                    if ekstra_not:
+                        blocks["ACIKLAMA"] += f"\n• {ekstra_not}"
+                        if is_english and blocks["TR_ACIKLAMA"]:
+                            blocks["TR_ACIKLAMA"] += f"\n• {ekstra_not}"
 
-                st.info("💡 Yapay zeka aracılığıyla yüklediğiniz görsel analiz edilerek oluşturulan ürün bilgileri otomasyonudur. Lütfen kullanmadan önce okuyarak gerekli revize işlemlerinden sonra içerikleri uygulayınız.")
-                st.caption(f"🔧 Kullanılan model: `{MODEL_NAME}`  •  Başlık uzunluğu: {len(blocks['BASLIK'])}/140")
+                    st.info("💡 Yapay zeka aracılığıyla yüklediğiniz görsel analiz edilerek oluşturulan ürün bilgileri otomasyonudur. Lütfen kullanmadan önce okuyarak gerekli revize işlemlerinden sonra içerikleri uygulayınız.")
+                    st.caption(f"🔧 Kullanılan model: `{MODEL_NAME}`  •  Başlık uzunluğu: {len(blocks['BASLIK'])}/140")
 
-                if is_english and blocks["TR_BASLIK"]:
-                    tab1, tab2 = st.tabs(["🇬🇧 İngilizce (Orijinal)", "🇹🇷 Türkçe Çevirisi (Kontrol İçin)"])
+                    if is_english and blocks["TR_BASLIK"]:
+                        tab1, tab2 = st.tabs(["🇬🇧 İngilizce (Orijinal)", "🇹🇷 Türkçe Çevirisi (Kontrol İçin)"])
 
-                    with tab1:
+                        with tab1:
+                            st.text_area("Başlık", blocks["BASLIK"], label_visibility="collapsed")
+                            st.text_area("Açıklama", blocks["ACIKLAMA"], height=320, label_visibility="collapsed")
+                            st.text_area("Etiketler", blocks["ETIKETLER"], label_visibility="collapsed")
+
+                        with tab2:
+                            st.text_area("TR Başlık", blocks["TR_BASLIK"], label_visibility="collapsed")
+                            st.text_area("TR Açıklama", blocks["TR_ACIKLAMA"], height=320, label_visibility="collapsed")
+                            st.text_area("TR Etiketler", blocks["TR_ETIKETLER"], label_visibility="collapsed")
+                    else:
                         st.text_area("Başlık", blocks["BASLIK"], label_visibility="collapsed")
                         st.text_area("Açıklama", blocks["ACIKLAMA"], height=320, label_visibility="collapsed")
                         st.text_area("Etiketler", blocks["ETIKETLER"], label_visibility="collapsed")
-
-                    with tab2:
-                        st.text_area("TR Başlık", blocks["TR_BASLIK"], label_visibility="collapsed")
-                        st.text_area("TR Açıklama", blocks["TR_ACIKLAMA"], height=320, label_visibility="collapsed")
-                        st.text_area("TR Etiketler", blocks["TR_ETIKETLER"], label_visibility="collapsed")
-                else:
-                    st.text_area("Başlık", blocks["BASLIK"], label_visibility="collapsed")
-                    st.text_area("Açıklama", blocks["ACIKLAMA"], height=320, label_visibility="collapsed")
-                    st.text_area("Etiketler", blocks["ETIKETLER"], label_visibility="collapsed")
 
         except Exception as e:
             st.error(f"Bir hata oluştu. Lütfen birkaç saniye bekleyip tekrar deneyin. Hata detayları: {str(e)}")
